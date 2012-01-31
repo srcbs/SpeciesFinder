@@ -1,6 +1,7 @@
-    Simon Rasmussen, SpeciesFinder will identify species based on 16S rRNA 
-    predictions from NGS reads, contigs, or whole genome sequenced bacteria
-    Copyright (C) 2012>  Simon Rasmussen, Salvatore Cosentino
+    2012, Simon Rasmussen (simon@cbs.dtu.dk)
+    SpeciesFinder will identify species based on 16S rRNA predictions 
+    from NGS reads, contigs, or whole genome sequenced bacteria
+    Copyright (C) 2012  Simon Rasmussen, Salvatore Cosentino
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
