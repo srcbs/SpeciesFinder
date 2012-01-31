@@ -111,7 +111,7 @@ def assembly_trinity(args):
    # extract fq
    cmd = paths['samtools_home'] + 'samtools'
    arg = ' view -X -F 4 %s | %s --prefix %s ' % (bam, paths['sam2single'], bam)
-   #arg =  ''' view %s | perl -ane 'print "@", $F[0], "\n", $F[9], "\n+\n", $F[10], "\n"' > %s ''' % (bam, fq)
+   if args.no_indel: arg = arg + ' --no_indel'
    print cmd+arg
    p_fq = subprocess.call(cmd+arg, shell=True)
    
@@ -305,7 +305,7 @@ def parse_taxonomy(taxid):
       fields = line.split('\t|\t')
       if fields[3][:-3] == 'scientific name':
          if tax_dict.has_key(fields[0]):
-            tax_dict[fields[0]] = fields[1]
+            tax_dict[fields[0]] = lineage[fields[0]][1]+ ":" + fields[1] + ":" + fields[0]
    
    # order and print
    from collections import OrderedDict
@@ -313,7 +313,7 @@ def parse_taxonomy(taxid):
    od = OrderedDict( (k,tax_dict[k]) for k in taxonomy)
    fh_out = open('ssu.lineage', 'w')
    fh_out.write('%s\n' % (' --> '.join(od.values()[::-1][1:])))
-   fh_out.write('%s\n' % (' --> '.join(od.keys()[::-1][1:])))
+   #fh_out.write('%s\n' % (' --> '.join(od.keys()[::-1][1:])))
    fh_out.close()
 
 
@@ -360,6 +360,7 @@ if __name__ == '__main__':
    parser.add_argument('--Mbases', help='Mbases to use for assembly [0=all]', default=0, type=float)
    parser.add_argument('--n', help='number of threads for bwasw [4]', default=4, type=int)
    parser.add_argument('--tax', help='parse taxonomy [False]', default=False, action='store_true')
+   parser.add_argument('--no_indel', help='do not extract reads with indels [False]', default=False, action='store_true')
    
    args = parser.parse_args()
    #args = parser.parse_args('Campy-05-0121_7_1_sequence.txt ../16SRNA/wgs_ssu.fa --sample Campy-05-0121 --ssu --reads_no 10000'.split())

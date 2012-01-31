@@ -16,7 +16,7 @@ def revcomp(seq):
       
    return comp[::-1]
 
-def extract_single(i, prefix):
+def extract_single(i, prefix, no_indel):
    '''Extract pairs from sam file (unfiltered)'''
    
    if i == '-':
@@ -41,9 +41,16 @@ def extract_single(i, prefix):
       if fields[1].find('r') > -1:
          seq = revcomp(fields[9])
          q = fields[10][::-1]
-         fh_out3.write('@%s/%s\n%s\n+\n%s\n' % (fields[0], end, ''.join(seq), q))
+         if no_indel:
+            if fields[5].find('I') > -1 or fields[5].find('D') > -1:
+               pass
+            else:
+               fh_out3.write('@%s/%s\n%s\n+\n%s\n' % (fields[0], end, ''.join(seq), q))
       else:
-         fh_out3.write('@%s/%s\n%s\n+\n%s\n' % (fields[0], end, fields[9], fields[10]))
+         if fields[5].find('I') > -1 or fields[5].find('D') > -1:
+            pass
+         else:
+            fh_out3.write('@%s/%s\n%s\n+\n%s\n' % (fields[0], end, fields[9], fields[10]))
    
    fh_out3.close()
 
@@ -54,8 +61,9 @@ if __name__ == '__main__':
    
    parser.add_argument('--i', help='input [-]', default='-')
    parser.add_argument('--prefix', help='output prefix [extracted]', default='extracted')
+   parser.add_argument('--no_indel', help='do not extract reads with indels [False]', default=False, action='store_true')
    
    args = parser.parse_args()
    #args = parser.parse_args('--i Campy-05-0121.sam --prefix Campy-05-0121.bam'.split())
    
-   extract_single(args.i, args.prefix)
+   extract_single(args.i, args.prefix, args.no_indel)

@@ -4,9 +4,10 @@ Args <- commandArgs();
 
 # R script for ranking #
 dat=read.table(Args[3], header=TRUE, sep="\t", comment.char="")
+dat$Coverage[dat$Coverage > 100] = 100
 
-# ranking coverage, identity, aln_length, nmismatches, ngaps
-ranks = apply(cbind(dat[,7:9], 1/dat[,10:11]),2, rank)
+# ranking coverage, identity, bitscore, nmismatches, ngaps
+ranks = apply(cbind(dat[,c(7:8, 13)], 1/dat[,10:11]),2, rank)
 rownames(ranks) = dat$"Hit."
 
 # summing ranks
@@ -17,11 +18,13 @@ m = max(ranks.s)
 best = which(ranks.s == m)
 if (length(best) != 1) {
    hs = names(best)
-   best = hs[which.min(dat[dat$"Hit." %in% hs,"identity"])]
+   best = hs[which.min(dat[dat$"Hit." %in% hs,"Identity"])]
    best_hit = best
 } else {
    best_hit = names(best)
 }
+
+# check if best are equally ranked #
 
 # write sorted output #
 write.table(dat[order(ranks.s, decreasing=TRUE),], file=paste(c(Args[3], ".tab"), sep="", collapse=""), sep="\t", quote=FALSE, row.names=FALSE)
