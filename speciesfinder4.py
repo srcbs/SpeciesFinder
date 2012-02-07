@@ -4,6 +4,9 @@ import argparse
 import subprocess
 import sys
 import os
+from Bio import SeqIO
+from Bio.Seq import Seq
+from Bio.SeqRecord import SeqRecord
 
 paths = {}
 paths['bwa_home'] = '/panfs1/cge-servers/SpeciesFinder/scripts/'
@@ -15,6 +18,14 @@ paths['nc_tax_name'] = '/panfs1/cge-servers/SpeciesFinder/scripts/db/nc_tax_name
 paths['taxonomy_ncbi'] = '/panfs1/cge-servers/SpeciesFinder/scripts/db/taxonomy/'
 paths['R'] = '/tools/bin/R-2.12'
 paths['speciesfinder_home'] = '/panfs1/cge-servers/SpeciesFinder/scripts/'
+paths['rna_hmm3'] = '/panfs1/cge-servers/SpeciesFinder/scripts/rna_hmm3/'
+debugMode = False
+
+#set the debug mode variable
+def setDebugMode(boolVal):
+   global debugMode
+   debugMode = boolVal
+
 
 def set_abspath():
    '''Returns absolute path of file to argparse'''
@@ -127,6 +138,7 @@ def assembly_trinity(args):
    return 'trinity/Trinity.fasta'
 
 
+## outdated ##
 def assembly_map(args):
    '''Performs bwasw alignment of input contigs'''
    
@@ -156,6 +168,51 @@ def assembly_map(args):
    p_extract = subprocess.call(cmd+arg, shell=True)
    
    return hits
+## outdated ##
+
+def rna_predict(fa, n):
+   '''Predict 16S ribosomal RNA using rna_hmm3'''
+   
+   # get cwd
+   home = os.getcwd()
+   rna_gff = '%s/%s.gff' % (home, os.path.split(fa)[1])
+   call = './rna_hmm3.py -i %s -o %s -m ssu -p %i -k arc,bac' % (fa, rna_gff, n)
+   p_rna = subprocess.Popen(call, shell=True, cwd=paths['rna_hmm3'], stdout=subprocess.PIPE)
+   stdout = p_rna.communicate()[0]
+   
+   # open gff file and get coordinates
+   fh = open(rna_gff, 'r')
+   header = fh.readline()
+   rrna_hits = {}
+   for line in fh:
+      line = line.rstrip()
+      fields = line.split('\t')
+      if fields[8] == '16S_rRNA': rrna_hits[fields[0]] = (fields[3], fields[4], fields[6])
+   fh.close()
+   
+   # open input fasta and output rrna predictions
+   fh = open(fa, 'r')
+   rrnas = []
+   for record in SeqIO.parse(fh, 'fasta'):
+      if rrna_hits.has_key(record.id):
+         start = int(rrna_hits[record.id][0])
+         end = int(rrna_hits[record.id][1])
+         frame = rrna_hits[record.id][2]
+         seqR = SeqRecord(record.seq[(start-1):end])
+         if frame == '-': seqR = seqR.reverse_complement()
+         
+         seqR.id = record.id
+         seqR.name = record.name
+         seqR.description = ''
+         rrnas.append(seqR)
+   
+   # write out
+   rna_fna = '%s/%s.rrna.fna' % (home, os.path.split(fa)[1])
+   fh_out = open(rna_fna, 'w')
+   c = SeqIO.write(rrnas, fh_out, 'fasta')
+   fh_out.close()
+   
+   return rna_fna
 
 
 def blast(hits_fa, fa, n):
@@ -305,16 +362,228 @@ def parse_taxonomy(taxid):
       fields = line.split('\t|\t')
       if fields[3][:-3] == 'scientific name':
          if tax_dict.has_key(fields[0]):
-            tax_dict[fields[0]] = lineage[fields[0]][1]+ ":" + fields[1] + ":" + fields[0]
-   
+            #tax_dict[fields[0]] = fields[1] #Simon's original version
+            tax_dict[fields[0]] = lineage[fields[0]][1]+ ":" + fields[1] + ":" + fields[0]   
+
    # order and print
    from collections import OrderedDict
    
    od = OrderedDict( (k,tax_dict[k]) for k in taxonomy)
    fh_out = open('ssu.lineage', 'w')
    fh_out.write('%s\n' % (' --> '.join(od.values()[::-1][1:])))
-   #fh_out.write('%s\n' % (' --> '.join(od.keys()[::-1][1:])))
+   #fh_out.write('%s\n' % (' --> '.join(od.keys()[::-1][1:]))) #taxonomy codes [already included in the values]
    fh_out.close()
+
+''' This function will read from the .out and .lineage '''
+def generateHtmlOutput():
+   if debugMode:
+      print "generateHtmlOutput::START"
+   outDir = args.sample
+   outHtml = outDir + "ssu.out.html"
+   linFile = "ssu.lineage"
+   resFile = "ssu.out.tab"
+   linPath = outDir + linFile
+   resPath = outDir + resFile
+   lineage = "NA"
+   linTplList = [] #will contain the comple lineage info in tuples structures
+   matchesList = [] #will contain the matched lines
+
+   errDir = "\"<span style=\\\"font-size:16px; color:red;\\\">ERROR</br>No output prediction could be produced</span>"
+   errRes = "\"<span style=\\\"font-size:16px; color:red;\\\">ERROR</br>No output prediction could be produced</span>" #result file was not produced
+   errLin = "\"<span style=\\\"font-size:16px; color:red;\\\">ERROR</br>The lineage could not be produced</span>" #lineage file was not produced
+
+   #html tags
+   tableOpen = "<table border=\"1\" bordercolor=\"#000000\" style=\"background-color:#FFFFFF\" width=\"50%\" cellpadding=\"3\" cellspacing=\"3\">"
+   tableClose = "</table>"
+   trOpen = "<tr>"
+   trClose = "</tr>"
+   tdOpenBold = "<td style=\"font-weight: bold; text-align: center; background-color: grey;\">"; # used for columns and rows names
+   #tdOpenBoldSilver = "<td style=\"font-weight: bold; text-align: center; background-color: silver;\">"; # used for columns and rows names
+   tdClose = "</td>"
+   ###############
+
+   if not os.path.isdir(outDir):
+      if debugMode:
+         print "ERROR: the directory " + outDir + " is not a valid directory"
+      #print error message
+      sys.stdout.write(errDir)
+
+   #first of check if the needed files exists
+   if not os.path.isfile(linPath):
+      if debugMode:
+         print "ERROR: the file " + linPath  + " does not exist"
+      print errLin
+   else: #read the lineage file and print the an html table for it
+      fd = open(linPath, "r")
+      lineage = fd.readline()
+      #sys.stdout.write(lineage) #DEBUG
+      #create a list of tuples from the lineage string
+      linSplit = lineage.strip().split(" --> ")
+      for el in linSplit:
+         #print el
+         el = el.strip()
+         flds = el.split(":")
+         linTplList.append((flds[0].title(), flds[1], flds[2]))
+      #for tpl in linTplList:
+      #   print str(tpl)
+      #now I will write the results in an html table
+      fd.close()
+
+   if not os.path.isfile(resPath):
+      if debugMode:
+         print "ERROR: the file " + resPath + " does not exist"
+      print errLin
+   else:
+      fd = open(resPath, "r")
+      for ln in fd:
+         ln = ln.strip()
+         if len(ln) == 0:
+            continue
+         flds = ln.split("\t")
+         tmpList = []
+         for index, fld in enumerate(flds):
+            if index > 1:
+               tmpList.append(fld.strip())
+         matchesList.append(tmpList)
+      fd.close()
+
+   #write the html output file
+   fdOut = open(outHtml, "w")
+   fdOut.write("\n")
+
+   #now I will write the table with the lineage information
+   fdOut.write("<center>")
+   fdOut.write("<span style=\"font-size:24px; font-weight:bold; color:black;\">")
+   fdOut.write("Lineage")
+   fdOut.write("</span>")
+
+   #OPEN THE TABLE
+   fdOut.write(tableOpen + "\n")
+
+   # LET'S PRINT THE HEADER OF THE TABLE
+   '''
+   fdOut.write(trOpen)
+   fdOut.write("<td style=\"font-weight: bold; font-size: 24px; text-align: center; background-color: white; color: grey;\">") # first cell on the table
+   fdOut.write("LINEAGE")
+   fdOut.write(tdClose) # close the td tag
+   fdOut.write(trClose)
+   '''
+
+   fdOut.write(trOpen)
+   # now let's writ ethe column values
+   fdOut.write(tdOpenBold) # open the td tag
+   fdOut.write("Tax Level")
+   fdOut.write(tdClose) # close the td tag
+   fdOut.write(tdOpenBold) # open the td tag
+   fdOut.write("Tax Name")
+   fdOut.write(tdClose) # close the td tag  
+   fdOut.write(tdOpenBold) # open the td tag
+   fdOut.write("NCBI Tax ID")
+   fdOut.write(tdClose) # close the td tag  
+   fdOut.write(trClose) #close table line
+
+   #WRITE THE REST OF TABLE LINES FOR THE TAXONOMY
+   for index, tpl in enumerate(linTplList):
+      fdOut.write(trOpen)
+
+      isEvenLine = False
+      if index % 2 == 0: #use different color for even and odd lines
+         isEvenLine = True
+
+      #read the values in the tuple
+      for i, val in enumerate(tpl):
+         color = ""
+         if isEvenLine:
+            color = "silver"
+         else:
+            color = "white"
+         #open cell tag
+         if i==0:
+            fdOut.write("<td style=\"font-weight: normal; text-align: center; font-style: italic;  background-color: " + color + ";\">\n")
+         elif i==1:
+            fdOut.write("<td style=\"font-weight: normal; text-align: center; font-style: normal;  background-color: " + color + ";\">\n")
+         elif i==1:
+            fdOut.write("<td style=\"font-weight: normal; text-align: center; font-style: normal;  background-color: " + color + ";\">\n")
+         elif i==2:
+            fdOut.write("<td style=\"font-weight: normal; text-align: center; font-style: normal;  background-color: " + color + ";\">\n")
+            val = val.strip()
+            val = "<a href=\"http://www.ncbi.nlm.nih.gov/Taxonomy/Browser/wwwtax.cgi?id=" + val  + "\" target=\"_blank\">" + val  + "</a>"
+         fdOut.write(val.strip() + "\n") #write the value inside the cell
+         fdOut.write("</td>\n") #close table cell
+
+      fdOut.write(trClose) #close line tag </tr>
+   fdOut.write(tableClose + "\n")
+
+   #now I will print the html table containing the information in the tuples
+   fdOut.write("</center>")
+
+   #PRINT EXTENDED OUTPUT
+   
+   #SHOW HIDE BUTTON FUNCTION
+   fdOut.write("<script type=\"text/javascript\">")
+   fdOut.write("function printOutput(){if (document.getElementById(\"demo\").style.display=='inline'){document.getElementById(\"demo\").style.display='none';}else{document.getElementById(\"demo\").style.display='inline';}}")
+   fdOut.write("</script>")
+   #BUTTON
+   fdOut.write("<center>\n")
+   fdOut.write("\n")
+   fdOut.write("</br>")
+   fdOut.write("<button type=\"button\" onclick=\"printOutput()\">best matches</button>")
+   fdOut.write("</center>\n")
+   fdOut.write("</br>")
+   fdOut.write("<div id=\"demo\" style=\"display: none;\">")
+   fdOut.write("<center>\n")
+   ###### WRITE THE TABLE WITH THE MATCHED SEQUENCES ####
+
+   #OPEN THE TABLE
+   fdOut.write("<table border=\"0\" bordercolor=\"#000000\" style=\"background-color:#FFFFFF\" width=\"50%\" cellpadding=\"3\" cellspacing=\"3\">")
+
+   #WRITE THE REST OF TABLE LINES FOR THE TAXONOMY
+   for index, flds in enumerate(matchesList):
+      fdOut.write(trOpen)
+
+      isEvenLine = False
+      if index > 0:
+         if index % 2 == 0: #use different color for even and odd lines
+            isEvenLine = True
+
+      #read the values in the values array
+      for i, val in enumerate(flds):
+         color = textcolor = ""
+         if index == 0:
+            #textcolor = "#FFFFFF" #white
+            textcolor = "#CCCCCC" #light grey
+            color = "#000000"
+         elif index == 1:
+            #textcolor = "#FFFFFF" #white
+            textcolor = "#000000" #black
+            #color = "#990000" #some red
+            color = "#66CC33" #some green
+         elif isEvenLine:
+            textcolor = "#000000"
+            color = "silver"
+         else:
+            textcolor = "#000000"
+            color = "white"
+
+         #OPEN TABLE CELL
+         fdOut.write("<td style=\"font-weight: normal; text-align: center; font-style: normal;  background-color: " + color + "; color: " + textcolor  + ";\">\n")
+         fdOut.write(val.strip())
+         fdOut.write("</td>")
+         
+      fdOut.write(trClose)
+
+   fdOut.write("</table>")
+   fdOut.write("</center>\n")
+   fdOut.write("</div>")
+   #################
+
+   fdOut.close()
+
+   #let's now print the lineage
+
+
+   if debugMode:
+      print "generateHtmlOutput::END" 
 
 
 def main(args):
@@ -332,12 +601,14 @@ def main(args):
    if args.contigs == False:
       hits_fa = assembly_trinity(args)
    else:
-      records = check_norecords(args)
-      if records > 10: 
+      #records = check_norecords(args)
+      #if records > 10:
          #sys.stderr.write('Skipping BWA\n')
          #hits_fa = assembly_map(args)
-         hits_fa = args.i
-      else: hits_fa = args.i
+         #hits_fa = args.i
+      #else: hits_fa = args.i
+      # predict 16S rrna
+      hits_fa = rna_predict(args.i, args.n)
    
    # 16S rrna (SSU)
    sys.stderr.write('Running SSU\n')
@@ -345,6 +616,9 @@ def main(args):
    
    if args.tax: parse_taxonomy(besttax)
    
+   ''' generate html output '''
+   generateHtmlOutput()
+
    sys.stderr.write('Done\n')
 
 
